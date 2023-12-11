@@ -12,25 +12,51 @@ onnx_model = onnx.load(TEST_NETWORK)
 
 # Toy model for how our code with the REAL softmax should generally be architect4ed
 def toy_example():
-    # TODO : Create an accurate depiction of the softmax operation with all the necessary params
+    # Instead this should be the softmax fn
+    def f(x):
+        return x**2
+
+    # Create a Z3 Solver
+    solver = Solver()
+
+    # Define a Real variable
+    x = Real('x')
+
+    # Define the bounds
+    lower_bound = RealVal(10)
+    upper_bound = RealVal(20)
+
+    # Add constraints to the solver
+    solver.add(f(x) >= lower_bound, f(x) <= upper_bound)
+
+    # Check if the constraints are satisfiable
+    if solver.check() == sat:
+        print("Solution exists within the bounds.")
+        print("One such solution: ", solver.model())
+    else:
+        print("No solution exists within the bounds.")
+
+def toy_example_two():
+    # Define the softmax function
     def softmax(x):
         e_x = np.exp(x - np.max(x))
         return e_x / e_x.sum()
-    
-    # Bogus input to softmax and fn call
-    # TODO : Parse this from a real network and pass it to the real softmax model
+
+    # Example input to softmax
     input_scores = np.array([12, 15, 18])
+
+    # Calculate softmax
     softmax_output = softmax(input_scores)
 
-    # Create Z3 Solver and translate softmax output to z3 types
-    # NOTE TODO ABOVE
+    # Create a Z3 Solver
     solver = Solver()
+
+    # Create Z3 Real constants based on softmax output
     softmax_vars = [RealVal(val) for val in softmax_output]
 
-    # Define bogus bounds
-    # TODO: define these in terms of EPSILON_VALS
-    lower_bound = RealVal(0)
-    upper_bound = RealVal(10000000000)
+    # Define the bounds
+    lower_bound = RealVal(0.1)  # Example lower bound
+    upper_bound = RealVal(0.9)  # Example upper bound
 
     # Add constraints to the solver for each softmax variable
     for var in softmax_vars:
@@ -38,11 +64,10 @@ def toy_example():
 
     # Check if the constraints are satisfiable
     if solver.check() == sat:
-        print("*** this is the toy example*** \n Solution exists within the bounds.")
+        print("Solution exists within the bounds.")
         print("One such solution: ", solver.model())
     else:
-        print("*** this is the toy example*** \n No solution exists within the bounds.")
-
+        print("No solution exists within the bounds.")
 
 def compute_softmax_inputs(weights, biases, input_data):
     logits = np.dot(input_data, weights) + biases
@@ -141,4 +166,5 @@ def network():
 if __name__ == '__main__':
     network()
     toy_example()
+    toy_example_two()
     
