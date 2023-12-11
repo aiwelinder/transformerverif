@@ -1,37 +1,91 @@
-from pysmt.shortcuts import *
-from pysmt.typing import *
+import numpy as np
 from z3 import *
+import onnx
+from onnx import numpy_helper
+
+EPSILON_VALS = [0.016, 0.02, 0.024, 0.032]
+
+# NOTE: this code is hard-coded to work on the self-attention-mnist-small.onnx file
+TEST_NETWORK = './training/self-attention-mnist-small.onnx'
+onnx_model = onnx.load(TEST_NETWORK)
 
 
-# create a type of Bit-Vector of size 32.
-# BV32 = BVType(32)
+# Toy model for how our code with the REAL softmax should generally be architect4ed
+def toy_example():
+    # TODO : Create an accurate depiction of the softmax operation with all the necessary params
+    def softmax(x):
+        e_x = np.exp(x - np.max(x))
+        return e_x / e_x.sum()
+    
+    # Bogus input to softmax and fn call
+    # TODO : Parse this from a real network and pass it to the real softmax model
+    input_scores = np.array([12, 15, 18])
+    softmax_output = softmax(input_scores)
 
-### Network architectur
-def network():
-    # Define the function f(x). For example, f(x) = x^2.
-    def f(x):
-        return x**2
-
-    # Create a Z3 Solver
+    # Create Z3 Solver and translate softmax output to z3 types
+    # NOTE TODO ABOVE
     solver = Solver()
+    softmax_vars = [RealVal(val) for val in softmax_output]
 
-    # Define a Real variable
-    x = Real('x')
+    # Define bogus bounds
+    # TODO: define these in terms of EPSILON_VALS
+    lower_bound = RealVal(0)
+    upper_bound = RealVal(10000000000)
 
-    # Define the bounds
-    lower_bound = RealVal(10)
-    upper_bound = RealVal(20)
-
-    # Add constraints to the solver
-    solver.add(f(x) >= lower_bound, f(x) <= upper_bound)
+    # Add constraints to the solver for each softmax variable
+    for var in softmax_vars:
+        solver.add(var >= lower_bound, var <= upper_bound)
 
     # Check if the constraints are satisfiable
     if solver.check() == sat:
-        print("Solution exists within the bounds.")
+        print("*** this is the toy example*** \n Solution exists within the bounds.")
         print("One such solution: ", solver.model())
     else:
-        print("No solution exists within the bounds.")
+        print("*** this is the toy example*** \n No solution exists within the bounds.")
 
+
+def compute_softmax_inputs(weights, biases, input_data):
+    logits = np.dot(input_data, weights) + biases
+    probabilities = softmax(logits)
+    return probabilities
+
+def extract_weights(layer):
+    # Parse the onnx_model.graph.initializer list, which contains the model's parameters
+    for tensor in onnx_model.graph.initializer:
+        if tensor.name == layer.input[1]:
+            # Convert the ONNX tensor to a numpy array
+            return numpy_helper.to_array(tensor)
+    raise ValueError("Weights not found for layer")
+
+def extract_biases(layer):
+    # Extract biases, which may be the second input to the Add layer
+    for tensor in onnx_model.graph.initializer:
+        if tensor.name == layer.input[1]:
+            return numpy_helper.to_array(tensor)
+    raise ValueError("Biases not found for layer")
+
+def network():
+    # In order to manually acquire the weights and biases for this particular network, we need to traverse the
+    # network until we find the softmax layer, and store the previous two layers, which contain the weights and bias
+    previous_previous_layer = None
+    previous_layer = None
+    for layer in onnx_model.graph.node:
+        if layer.op_type == 'Softmax' and previous_previous_layer.op_type == 'MatMul':
+            # This runs until we have saved the 
+            print(previous_previous_layer.op_type)
+            print(previous_layer.op_type)
+            break
+        previous_previous_layer = previous_layer
+        previous_layer = layer
+    
+    # Now, we have isolated the MatMul (weights), Add (bias), and the Softmax layers
+    weights = extract_weights(previous_previous_layer)
+    print("Hey it's the weights! ", weights)
+    biases = extract_biases(previous_layer)
+    print("Hey it's the biases! ", biases)
+
+    # TODO: We need a 16x10 vector of inputs???? In addition to their expected output???
+    input_val = compute_softmax_inputs(weights, biases, [1])
 
     ## DEAD CODE BELOW 
     # input_val = Symbol("input", BV32)
@@ -86,4 +140,5 @@ def network():
 
 if __name__ == '__main__':
     network()
+    toy_example()
     
