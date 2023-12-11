@@ -2,12 +2,12 @@ import numpy as np
 from z3 import *
 import onnx
 from onnx import numpy_helper
-import torchvision.datasets as datasets
+import idx2numpy
 
 EPSILON_VALS = [0.016, 0.02, 0.024, 0.032]
 
 # NOTE: this code is hard-coded to work on the self-attention-mnist-small.onnx file
-TEST_NETWORK = '../../bounding-softmax/transformer_experiment/training/self-attention-mnist-small.onnx'
+TEST_NETWORK = './training/self-attention-mnist-small.onnx'
 onnx_model = onnx.load(TEST_NETWORK)
 
 
@@ -106,9 +106,20 @@ def network():
     biases = extract_biases(previous_layer)
     print("Hey it's the biases! ", biases)
 
-    mnist_testset = datasets.MNIST(root='./data', train=False, download=True, transform=None)
-    X_test = mnist_testset.data.numpy()
-    Y_test = mnist_testset.targets.numpy()
+    # mnist_testset = datasets.MNIST(root='./data', train=False, download=True, transform=None)
+    # X_test = mnist_testset.data.numpy()
+    # Y_test = mnist_testset.targets.numpy()
+    images_file = 'archive/t10k-images-idx3-ubyte/t10k-images-idx3-ubyte'
+    labels_file = 'archive/t10k-labels-idx1-ubyte/t10k-labels-idx1-ubyte'
+
+    # Load the images and labels from IDX format files
+    X_test = idx2numpy.convert_from_file(images_file)
+    Y_test = idx2numpy.convert_from_file(labels_file)
+
+    # Preprocess the data
+    # Flatten the image data, normalize pixel values, etc.
+    X_test = X_test.reshape((X_test.shape[0], -1)) / 255.0  # Normalize and flatten
+
     point = np.array(X_test[0]).flatten() / 255
     networkOutput = compute_softmax_values(weights, biases, point)
     expected_output = None
