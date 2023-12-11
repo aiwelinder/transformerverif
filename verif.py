@@ -2,11 +2,12 @@ import numpy as np
 from z3 import *
 import onnx
 from onnx import numpy_helper
+import torchvision.datasets as datasets
 
 EPSILON_VALS = [0.016, 0.02, 0.024, 0.032]
 
 # NOTE: this code is hard-coded to work on the self-attention-mnist-small.onnx file
-TEST_NETWORK = './training/self-attention-mnist-small.onnx'
+TEST_NETWORK = '../../bounding-softmax/transformer_experiment/training/self-attention-mnist-small.onnx'
 onnx_model = onnx.load(TEST_NETWORK)
 
 
@@ -37,7 +38,7 @@ def toy_example():
         print("No solution exists within the bounds.")
 
 def toy_example_two():
-    # Define the softmax function
+    # basic ass softmax
     def softmax(x):
         e_x = np.exp(x - np.max(x))
         return e_x / e_x.sum()
@@ -48,28 +49,24 @@ def toy_example_two():
     # Calculate softmax
     softmax_output = softmax(input_scores)
 
-    # Create a Z3 Solver
+    # create z3 solver and add convert np arr to z3
     solver = Solver()
-
-    # Create Z3 Real constants based on softmax output
     softmax_vars = [RealVal(val) for val in softmax_output]
 
-    # Define the bounds
-    lower_bound = RealVal(0.1)  # Example lower bound
-    upper_bound = RealVal(0.9)  # Example upper bound
+    lower_bound = RealVal(0.1)
+    upper_bound = RealVal(0.9)
 
-    # Add constraints to the solver for each softmax variable
+    # Add constriants to the solver for each softmax variable and check
     for var in softmax_vars:
         solver.add(var >= lower_bound, var <= upper_bound)
 
-    # Check if the constraints are satisfiable
     if solver.check() == sat:
         print("Solution exists within the bounds.")
         print("One such solution: ", solver.model())
     else:
         print("No solution exists within the bounds.")
 
-def compute_softmax_inputs(weights, biases, input_data):
+def compute_softmax_values(weights, biases, input_data):
     logits = np.dot(input_data, weights) + biases
     probabilities = softmax(logits)
     return probabilities
@@ -109,8 +106,16 @@ def network():
     biases = extract_biases(previous_layer)
     print("Hey it's the biases! ", biases)
 
+    mnist_testset = datasets.MNIST(root='./data', train=False, download=True, transform=None)
+    X_test = mnist_testset.data.numpy()
+    Y_test = mnist_testset.targets.numpy()
+    point = np.array(X_test[0]).flatten() / 255
+    networkOutput = compute_softmax_values(weights, biases, point)
+    expected_output = None
+
+
     # TODO: We need a 16x10 vector of inputs???? In addition to their expected output???
-    input_val = compute_softmax_inputs(weights, biases, [1])
+    input_val = compute_softmax_inputs(weights, biases, )
 
     ## DEAD CODE BELOW 
     # input_val = Symbol("input", BV32)
