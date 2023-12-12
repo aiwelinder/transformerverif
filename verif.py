@@ -59,7 +59,8 @@ def extract_biases(onnx_model, layer):
             return numpy_helper.to_array(tensor)
     raise ValueError("Biases not found for layer")
 
-def network():
+def network(perturb):
+    start_time = time.perf_counter()
     print("RUNNING AND VERIFYING UNSIMPLIFIED NETWORK :: self-attention-mnist-small.onnx")
     # NOTE: this code is hard-coded to work on the self-attention-mnist-small.onnx file
     TEST_NETWORK = './training/self-attention-mnist-small.onnx'
@@ -108,12 +109,12 @@ def network():
     # Run the model up to output name of the Reshape layer right before the MatMul leading to softmax
     reshape_output_name = sess.get_outputs()[0].name
     # 'outputs' now contains the output of the layer before the MatMul that feeds into the softmax
-    outputs = sess.run([reshape_output_name] ,{input_name: input_data})
+    outputs = sess.run([reshape_output_name],{input_name: input_data})
     input_to_matmul = outputs[0]
 
     # Reshape input_to_matmul to match expected weights and compute softmax
     input_to_matmul = input_to_matmul.reshape(input_to_matmul.shape[0], -1)
-    networkOutput = compute_softmax_values(weights, biases, input_to_matmul)
+    networkOutput = compute_softmax_values(weights, biases, input_to_matmul + perturb)
     # Convert weights into labels
     # NOTE: I think this step is wrong, we should be comparing the probabilites not the labels
     class_labels = np.argmax(networkOutput, axis=1)
@@ -126,19 +127,16 @@ def network():
     output_to_check = [RealVal(val) for val in class_labels]
     expected_output = [RealVal(val) for val in Y_test]
 
-    for eps in EPSILON_VALS:
-        start_time = time.perf_counter()
-        print("Running check for range: ", eps)
-        for i in range(len(expected_output)):
-            solver.add(output_to_check[i] >= RealVal(expected_output[i] - eps))
-            solver.add(output_to_check[i] <= RealVal(expected_output[i] + eps))
+    for i in range(len(expected_output)):
+        solver.add(output_to_check[i] >= RealVal(expected_output[i] - perturb))
+        solver.add(output_to_check[i] <= RealVal(expected_output[i] + perturb))
 
-        if solver.check() == sat:
-            print("Solution exists within the bounds.")
-            print("One such solution: ", solver.model())
-        else:
-            print("No solution exists within the bounds.")
-        print("TIME TAKEN: ", time.perf_counter() - start_time)
+    if solver.check() == sat:
+        print("Correct classification!.")
+        print("Eg: ", solver.model())
+    else:
+        print("Misclassified!")
+    print("TIME TAKEN: ", time.perf_counter() - start_time)
 
 # Buggy as hell
 def simple_network():
@@ -221,5 +219,7 @@ def simple_network():
 
 if __name__ == '__main__':
     # toy_example()
-    network()
+    for eps in EPSILON_VALS:
+        print("Verifying for eps ", eps)
+        network(eps)
     # simple_network()
