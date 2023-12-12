@@ -62,6 +62,7 @@ def extract_biases(onnx_model, layer):
 def network(perturb):
     start_time = time.perf_counter()
     print("RUNNING AND VERIFYING UNSIMPLIFIED NETWORK :: self-attention-mnist-small.onnx")
+    print("EPSILON IS ", perturb)
     # NOTE: this code is hard-coded to work on the self-attention-mnist-small.onnx file
     TEST_NETWORK = './training/self-attention-mnist-small.onnx'
     PRUNED_NETWORK = './pruned_self-attention-mnist-small.onnx'
@@ -114,30 +115,65 @@ def network(perturb):
 
     # Reshape input_to_matmul to match expected weights and compute softmax
     input_to_matmul = input_to_matmul.reshape(input_to_matmul.shape[0], -1)
-    networkOutput = compute_softmax_values(weights, biases, input_to_matmul + perturb)
+    networkOutput_Perturbed = compute_softmax_values(weights, biases, input_to_matmul + perturb)
+    networkOutput_UnPerturbed = compute_softmax_values(weights, biases, input_to_matmul)
+
     # Convert weights into labels
-    # NOTE: I think this step is wrong, we should be comparing the probabilites not the labels
-    class_labels = np.argmax(networkOutput, axis=1)
+    class_labels_perturbed = np.argmax(networkOutput_Perturbed, axis=1)
     # see these are of a similar shape
     # print(class_labels)
     # print(Y_test)
 
     # Now we do formal methods!!
-    solver = Solver()
-    output_to_check = [RealVal(val) for val in class_labels]
+
+    # For high-level analysis, keep track of how our model performs on each iter
+    aggregate = {
+        "misclassified": 0,
+        "misclassified_and_in_range": 0,
+        "in_range_and_correct": 0
+    }
+    # solver1 considers across ALL inputs
+    solver1 = Solver()
+    # NOTE: this defines the LABELS not the probabilities
+    output_to_check = [RealVal(val) for val in class_labels_perturbed]
     expected_output = [RealVal(val) for val in Y_test]
 
+    # iterating through each input image
     for i in range(len(expected_output)):
-        prop1 = output_to_check[i] >= RealVal(expected_output[i] - perturb)
-        prop2 = output_to_check[i] <= RealVal(expected_output[i] + perturb)
-        solver.add(output_to_check[i] == expected_output[i])
-        solver.add(Or(Not(prop1), Not(prop2)))
-
-    if solver.check() == sat:
+        # solver2 helps us parse how our logic holds
+        solver2 = Solver()
+        # Prop to check if labels are equal
+        correct_classification = output_to_check[i] == expected_output[i]
+        solver1.add(correct_classification)
+        solver2.add(correct_classification)
+        # Check if for this image we classified it correctly
+        if solver2.check() != sat:
+            # print("Misclassified!")
+            aggregate["misclassified"] += 1
+        else:
+            # Prop to check if probability arrays are within range of epsilon
+            perturbed_probabilities = [RealVal(val) for val in networkOutput_Perturbed[i]]
+            unperturbed_probabilities = [RealVal(val) for val in networkOutput_UnPerturbed[i]]
+            for j in range(len(perturbed_probabilities)):
+                lower_bound = perturbed_probabilities[j] >= unperturbed_probabilities[j] - perturb
+                upper_bound = perturbed_probabilities[j] <= unperturbed_probabilities[j] + perturb
+                solver2.add(Or(Not(lower_bound), Not(upper_bound)))
+            # erm not sure if this is right...
+            if solver2.check() == sat:
+                # print("Input " + i + " is misclassified as the probabilities were out of range")
+                aggregate["misclassified_and_in_range"] += 1
+            else:
+                # print("There is no way you can be within that range and not give the correct output")
+                aggregate["in_range_and_correct"] += 1
+    
+    # Eh why not ..? 
+    print("Checking across ALL the images")
+    if solver1.check() == sat:
         print("Solution exists within the bounds.")
-        print("One such solution: ", solver.model())
+        print("One such solution: ", solver1.model())
     else:
         print("No solution exists within the bounds.")
+    print("AGGREGATE INFO: ", aggregate)
     print("TIME TAKEN: ", time.perf_counter() - start_time)
 
 # Buggy as hell
@@ -222,6 +258,5 @@ def simple_network():
 if __name__ == '__main__':
     # toy_example()
     for eps in EPSILON_VALS:
-        print("Verifying for eps ", eps)
         network(eps)
     # simple_network()
