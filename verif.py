@@ -128,14 +128,16 @@ def network(perturb):
     expected_output = [RealVal(val) for val in Y_test]
 
     for i in range(len(expected_output)):
-        solver.add(output_to_check[i] >= RealVal(expected_output[i] - perturb))
-        solver.add(output_to_check[i] <= RealVal(expected_output[i] + perturb))
+        prop1 = output_to_check[i] >= RealVal(expected_output[i] - perturb)
+        prop2 = output_to_check[i] <= RealVal(expected_output[i] + perturb)
+        solver.add(output_to_check[i] == expected_output[i])
+        solver.add(Or(Not(prop1), Not(prop2)))
 
     if solver.check() == sat:
-        print("Correct classification!.")
-        print("Eg: ", solver.model())
+        print("Solution exists within the bounds.")
+        print("One such solution: ", solver.model())
     else:
-        print("Misclassified!")
+        print("No solution exists within the bounds.")
     print("TIME TAKEN: ", time.perf_counter() - start_time)
 
 # Buggy as hell
