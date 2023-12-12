@@ -3,13 +3,14 @@ from z3 import *
 import onnx
 from onnx import numpy_helper
 import idx2numpy
+import onnxruntime as ort
 
 EPSILON_VALS = [0.016, 0.02, 0.024, 0.032]
 
 # NOTE: this code is hard-coded to work on the self-attention-mnist-small.onnx file
 TEST_NETWORK = './training/self-attention-mnist-small.onnx'
+PRUNED_NETWORK = './modified_pruned_network.onnx'
 onnx_model = onnx.load(TEST_NETWORK)
-
 
 # Toy model for how our code with the REAL softmax should generally be architect4ed
 def toy_example():
@@ -37,34 +38,10 @@ def toy_example():
     else:
         print("No solution exists within the bounds.")
 
-def toy_example_two():
-    # basic ass softmax
-    def softmax(x):
-        e_x = np.exp(x - np.max(x))
-        return e_x / e_x.sum()
-
-    # Example input to softmax
-    input_scores = np.array([12, 15, 18])
-
-    # Calculate softmax
-    softmax_output = softmax(input_scores)
-
-    # create z3 solver and add convert np arr to z3
-    solver = Solver()
-    softmax_vars = [RealVal(val) for val in softmax_output]
-
-    lower_bound = RealVal(0.1)
-    upper_bound = RealVal(0.9)
-
-    # Add constriants to the solver for each softmax variable and check
-    for var in softmax_vars:
-        solver.add(var >= lower_bound, var <= upper_bound)
-
-    if solver.check() == sat:
-        print("Solution exists within the bounds.")
-        print("One such solution: ", solver.model())
-    else:
-        print("No solution exists within the bounds.")
+# basic ass softmax
+def softmax(x):
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum()
 
 def compute_softmax_values(weights, biases, input_data):
     logits = np.dot(input_data, weights) + biases
@@ -93,94 +70,71 @@ def network():
     previous_layer = None
     for layer in onnx_model.graph.node:
         if layer.op_type == 'Softmax' and previous_previous_layer.op_type == 'MatMul':
-            # This runs until we have saved the 
-            print(previous_previous_layer.op_type)
-            print(previous_layer.op_type)
+            # This runs until we have saved the 2 layers preceding the softmax step
+            # print(previous_previous_layer.op_type)
+            # print(previous_layer.op_type)
             break
         previous_previous_layer = previous_layer
         previous_layer = layer
     
     # Now, we have isolated the MatMul (weights), Add (bias), and the Softmax layers
     weights = extract_weights(previous_previous_layer)
-    print("Hey it's the weights! ", weights)
+    # print("Hey it's the weights! ", weights)
     biases = extract_biases(previous_layer)
-    print("Hey it's the biases! ", biases)
+    # print("Hey it's the biases! ", biases)
 
+    # Previously, we tried using the torchvision dataset but instead downloaded it directly and threw it into the repo
     # mnist_testset = datasets.MNIST(root='./data', train=False, download=True, transform=None)
     # X_test = mnist_testset.data.numpy()
     # Y_test = mnist_testset.targets.numpy()
     images_file = 'archive/t10k-images-idx3-ubyte/t10k-images-idx3-ubyte'
     labels_file = 'archive/t10k-labels-idx1-ubyte/t10k-labels-idx1-ubyte'
-
     # Load the images and labels from IDX format files
     X_test = idx2numpy.convert_from_file(images_file)
     Y_test = idx2numpy.convert_from_file(labels_file)
+    # Load the ONNX model using ONNX Runtime
+    # This network's final 3 layers are pruned s.t. its output is the input to the softmax fn.
+    sess = ort.InferenceSession(PRUNED_NETWORK)
 
-    # Preprocess the data
-    # Flatten the image data, normalize pixel values, etc.
-    X_test = X_test.reshape((X_test.shape[0], -1)) / 255.0  # Normalize and flatten
-
-    point = np.array(X_test[0]).flatten() / 255
-    networkOutput = compute_softmax_values(weights, biases, point)
-    expected_output = None
-
-
-    # TODO: We need a 16x10 vector of inputs???? In addition to their expected output???
-    input_val = compute_softmax_inputs(weights, biases, )
-
-    ## DEAD CODE BELOW 
-    # input_val = Symbol("input", BV32)
-
-    # # add actual softmax logic shit here but for now
-    # remainder = BVURem(input_val, BV(10, 32))
+    # Reshape the MNIST image data to the expected input shape of the model
+    input_details = sess.get_inputs()[0]
+    input_name = input_details.name
+    expected_input_shape = input_details.shape
+    # print("Expected input shape:", expected_input_shape)
+    input_data = X_test.astype('float32') / 255
+    input_data = np.reshape(input_data, (input_data.shape[0], 28, 28, 1))  # Change to NHWC format
     
-    # leq_5 = And(BVUGE(remainder, BV(0, 32)), BVULE(remainder, BV(5, 32)))
-    # # greater_than_5 = And(GE(remainder, BV(6, 32)), LE(remainder, BV(9, 32)))
-    # nearest_odd_multiple = Ite(leq_5, BVAdd(input_val, BVSub(BV(5, 32), remainder)), BVSub(input_val, BVSub(BV(5, 32), remainder)))
+    # Run the model up to output name of the Reshape layer right before the MatMul leading to softmax
+    reshape_output_name = sess.get_outputs()[0].name
+    outputs = sess.run([reshape_output_name] ,{input_name: input_data})
 
-    # actual_output = BV(25, 32)
-    # operations_prop = Equals(actual_output, nearest_odd_multiple)
-    # range_prop = And(BVULE(input_val, BVAdd(actual_output, BV(4, 32))), BVUGE(input_val, BVSub(actual_output, BV(5, 32))))
-    
-    # solver = Solver()
-    # solver.add_assertion(Or(Not(operations_prop), Not(range_prop)))
-    # solver.solve()
+    # 'outputs' now contains the output of the layer before the MatMul that feeds into the softmax
+    input_to_matmul = outputs[0]
 
-    # if not solver.solve():
-    #     print("Property holds for the following model:")
-    #     print(solver.get_model())
-    # else:
-    #     print("Property does not hold.")
+    # Reshape input_to_matmul to match expected weights and compute softmax
+    input_to_matmul = input_to_matmul.reshape(input_to_matmul.shape[0], -1)
+    networkOutput = compute_softmax_values(weights, biases, input_to_matmul)
+    # Convert weights into labels
+    class_labels = np.argmax(networkOutput, axis=1)
 
-    # """
-    # actual transformer
-    
-    # define input matrix as symbol
-    # we know what the output should be, store in "actual_output" var or smth
+    # Now we do formal methods!!
+    solver = Solver()
+    output_to_check = [RealVal(val) for val in class_labels]
+    expected_output = [RealVal(val) for val in Y_test]
 
-    # do all the operations
-    # property to verify:
-    #     result of operations is NOT equal to actual_output
-    #     the input is NOT within the range
-    #     take disjunction of above, make sure it is unsat
+    for eps in EPSILON_VALS:
+        print("Running check for range: ", eps)
+        for i in range(len(expected_output)):
+            solver.add(output_to_check[i] >= RealVal(expected_output[i] - eps))
+            solver.add(output_to_check[i] <= RealVal(expected_output[i] + eps))
 
-    # ask: logic (does the disjunction of negations work? right now it's saying property does
-    # not hold for our trivial example)
-    # ask: implementation of actual softmax
-    #     we know we should initialize a matrix, but after that. crickets
-    #     can we just import onnx and like. run it
+        if solver.check() == sat:
+            print("Solution exists within the bounds.")
+            print("One such solution: ", solver.model())
+        else:
+            print("No solution exists within the bounds.")
 
-    #      - implement and encode softmax function using exponential encoding pySMT 
-    #      - then it's a question  of whether we want to add another encoding via log exponential (in paper) or some improvement
-
-    #      - if we were to encode sigmoid using bit vector
-         
-    # ask: is there more than one operation bc it looks like a billion
-    
-    # """
 
 if __name__ == '__main__':
-    network()
     toy_example()
-    toy_example_two()
-    
+    network()
