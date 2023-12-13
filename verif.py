@@ -7,6 +7,7 @@ import onnxruntime as ort
 import time
 
 EPSILON_VALS = [0.012, 0.016, 0.02, 0.024, 0.032]
+# EPSILON_VALS = [0, 0.0002, 0.0004, 0.008, 0.012]
 
 # Toy model for how our code with the REAL softmax should generally be architect4ed
 def toy_example():
@@ -58,6 +59,42 @@ def extract_biases(onnx_model, layer):
         if tensor.name == layer.input[1]:
             return numpy_helper.to_array(tensor)
     raise ValueError("Biases not found for layer")
+
+def z3_softmax(input_matrix, weights, biases):
+    rows, cols = len(input_matrix), len(weights[0])
+    transformed_input = []
+
+    for i in range(rows):
+        row = []
+        for j in range(cols):
+            # Linear combination of inputs and weights, plus bias
+            sum_expr = Sum([input_matrix[i][k] * weights[k][j] for k in range(len(weights))]) + biases[j]
+            row.append(sum_expr)
+        transformed_input.append(row)
+        # print("row " + i + " of " + rows)
+
+    # Return the transformed input directly, as Z3 does not support softmax computation
+    return transformed_input
+    # rows, cols = len(input_matrix), len(weights[0])
+    # softmax_output = []
+
+    # print("Applying linear transformation")
+    # transformed_input = [[Sum([input_matrix[i][k] * weights[k][j] for k in range(len(weights))]) + biases[j] 
+    #                       for j in range(cols)] for i in range(rows)]
+
+    # print("Computing exponentiated vals and summing for each elem")
+    # for i in range(rows):
+    #     # Compute the exponentiated values for each element in the row
+    #     exp_values = [Real(transformed_input[i][j]) for j in range(cols)]
+
+    #     # Compute the sum of the exponentiated values
+    #     sum_exp_values = Sum(exp_values)
+
+    #     # Normalize each value by dividing by the sum
+    #     softmax_row = [exp_values[j] / sum_exp_values for j in range(cols)]
+    #     softmax_output.append(softmax_row)
+
+    # return softmax_output
 
 def network(perturb):
     start_time = time.perf_counter()
@@ -115,6 +152,7 @@ def network(perturb):
 
     # Reshape input_to_matmul to match expected weights and compute softmax
     input_to_matmul = input_to_matmul.reshape(input_to_matmul.shape[0], -1)
+
     networkOutput_Perturbed = compute_softmax_values(weights, biases, input_to_matmul + perturb)
     networkOutput_UnPerturbed = compute_softmax_values(weights, biases, input_to_matmul)
 
@@ -122,6 +160,14 @@ def network(perturb):
     class_labels_perturbed = np.argmax(networkOutput_Perturbed, axis=1)
 
     # Now we do formal methods!!
+
+    """
+    TODO (?)
+    put a particular image through the network up to the softmax
+    that vector(?) gets put through the actual softmax because it's a value and we can do that
+    at the same time, define a symbol that has the same shape and put it through our z3 version of softmax
+    compare these two output probabilities; want to know if 1. theyre the same and 2. the two inputs were within some epsilon of each other
+    """
     
     solver = Solver()
     # NOTE: this defines the LABELS not the probabilities
@@ -130,14 +176,15 @@ def network(perturb):
 
     # iterating through each input image
     for i in range(len(expected_output)):
+        x_i = Real("x" + str(i))
         # Prop to check if labels are equal
         correct_classification = output_to_check[i] == expected_output[i]
         # Prop to check if probability arrays are within range of epsilon
         perturbed_probabilities = [RealVal(val) for val in networkOutput_Perturbed[i]]
         unperturbed_probabilities = [RealVal(val) for val in networkOutput_UnPerturbed[i]]
         for j in range(len(perturbed_probabilities)):
-            lower_bound = perturbed_probabilities[j] >= unperturbed_probabilities[j] - perturb
-            upper_bound = perturbed_probabilities[j] <= unperturbed_probabilities[j] + perturb
+            lower_bound = x_i >= unperturbed_probabilities[j] - perturb
+            upper_bound = x_i <= unperturbed_probabilities[j] + perturb
             solver.add(Or(Not(And(lower_bound, upper_bound), Not(correct_classification))))
     
     if solver.check() == unsat:
@@ -148,5 +195,6 @@ def network(perturb):
     print("")
 
 if __name__ == '__main__':
+    # toy_example()
     for eps in EPSILON_VALS:
         network(eps)
