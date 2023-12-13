@@ -6,8 +6,7 @@ import idx2numpy
 import onnxruntime as ort
 import time
 
-EPSILON_VALS = [0.012, 0.016, 0.02, 0.024, 0.032]
-# EPSILON_VALS = [0, 0.0002, 0.0004, 0.008, 0.012]
+EPSILON_VALS = [0.001, 0.002, 0.004, 0.008, 0.012]
 
 # Toy model for how our code with the REAL softmax should generally be architect4ed
 def toy_example():
@@ -84,13 +83,10 @@ def z3_softmax(input_matrix, weights, biases):
 
     # print("Computing exponentiated vals and summing for each elem")
     # for i in range(rows):
-    #     # Compute the exponentiated values for each element in the row
     #     exp_values = [Real(transformed_input[i][j]) for j in range(cols)]
 
-    #     # Compute the sum of the exponentiated values
     #     sum_exp_values = Sum(exp_values)
 
-    #     # Normalize each value by dividing by the sum
     #     softmax_row = [exp_values[j] / sum_exp_values for j in range(cols)]
     #     softmax_output.append(softmax_row)
 
