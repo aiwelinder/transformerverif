@@ -6,7 +6,7 @@ import idx2numpy
 import onnxruntime as ort
 import time
 
-EPSILON_VALS = [0.001, 0.002, 0.004, 0.008, 0.012]
+BETA_VALS = [0.001, 0.002, 0.004, 0.008, 0.012]
 
 # Toy model for how our code with the REAL softmax should generally be architect4ed
 def toy_example():
@@ -95,7 +95,7 @@ def z3_softmax(input_matrix, weights, biases):
 def network(perturb):
     start_time = time.perf_counter()
     print("Running and verifying simplified network: self-attention-mnist-small.onnx")
-    print("epsilon =", perturb)
+    print("beta =", perturb)
     # NOTE: this code is hard-coded to work on the self-attention-mnist-small.onnx file
     TEST_NETWORK = './training/self-attention-mnist-small.onnx'
     PRUNED_NETWORK = './pruned_self-attention-mnist-small.onnx'
@@ -162,7 +162,7 @@ def network(perturb):
     put a particular image through the network up to the softmax
     that vector(?) gets put through the actual softmax because it's a value and we can do that
     at the same time, define a symbol that has the same shape and put it through our z3 version of softmax
-    compare these two output probabilities; want to know if 1. theyre the same and 2. the two inputs were within some epsilon of each other
+    compare these two output probabilities; want to know if 1. theyre the same and 2. the two inputs were within some beta of each other
     """
     
     solver = Solver()
@@ -175,7 +175,7 @@ def network(perturb):
         x_i = Real("x" + str(i))
         # Prop to check if labels are equal
         correct_classification = output_to_check[i] == expected_output[i]
-        # Prop to check if probability arrays are within range of epsilon
+        # Prop to check if probability arrays are within range of beta
         perturbed_probabilities = [RealVal(val) for val in networkOutput_Perturbed[i]]
         unperturbed_probabilities = [RealVal(val) for val in networkOutput_UnPerturbed[i]]
         for j in range(len(perturbed_probabilities)):
@@ -192,5 +192,5 @@ def network(perturb):
 
 if __name__ == '__main__':
     # toy_example()
-    for eps in EPSILON_VALS:
+    for eps in BETA_VALS:
         network(eps)
